@@ -1,7 +1,7 @@
 package com.xxx.util.useragent.parser;
 
-import java.util.Collections;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.xxx.util.useragent.bean.UserAgent;
 import com.xxx.util.useragent.bean.Device;
@@ -15,15 +15,19 @@ public class CachingParser extends Parser {
 
 	private int cacheSize;
 	private Map<String, Browser> cacheBrowser;
+	private ReentrantReadWriteLock browserLock = new ReentrantReadWriteLock();
 	private Map<String, Device> cacheDevice;
+	private ReentrantReadWriteLock deviceLock = new ReentrantReadWriteLock();
 	private Map<String, OS> cacheOS;
+	private ReentrantReadWriteLock osLock = new ReentrantReadWriteLock();
 	private Map<String, UserAgent> cacheUserAgent;
+	private ReentrantReadWriteLock userLock = new ReentrantReadWriteLock();
 
 	private void init() {
-		cacheBrowser = Collections.synchronizedMap(new LRUMap<>(cacheSize));
-		cacheDevice = Collections.synchronizedMap(new LRUMap<>(cacheSize));
-		cacheOS = Collections.synchronizedMap(new LRUMap<>(cacheSize));
-		cacheUserAgent = Collections.synchronizedMap(new LRUMap<>(cacheSize));
+		cacheBrowser = new LRUMap<>(cacheSize);
+		cacheDevice = new LRUMap<>(cacheSize);
+		cacheOS = new LRUMap<>(cacheSize);
+		cacheUserAgent = new LRUMap<>(cacheSize);
 	}
 
 	public CachingParser(int cacheSize){
@@ -41,11 +45,12 @@ public class CachingParser extends Parser {
 		if (agentString == null) {
 			return null;
 		}
-		UserAgent userAgent = cacheUserAgent.get(agentString);
+
+		UserAgent userAgent = getWithLock(cacheUserAgent, agentString, userLock);
 		if (userAgent != null)
 			return userAgent;
 		userAgent = new UserAgent(this.parseBrowser(agentString), this.parseOS(agentString), this.parseDevice(agentString));
-		cacheUserAgent.put(agentString, userAgent);
+		putWithLock(cacheUserAgent, agentString, userAgent, userLock);
 		return userAgent;
 	}
 
@@ -54,12 +59,12 @@ public class CachingParser extends Parser {
 		if (agentString == null) {
 			return null;
 		}
-		Browser browser = cacheBrowser.get(agentString);
+		Browser browser = getWithLock(cacheBrowser, agentString, browserLock);
 		if (browser != null) {
 			return browser;
 		}
 		browser = super.parseBrowser(agentString);
-		cacheBrowser.put(agentString, browser);
+		putWithLock(cacheBrowser, agentString, browser, browserLock);
 		return browser;
 	}
 
@@ -68,12 +73,12 @@ public class CachingParser extends Parser {
 		if (agentString == null) {
 			return null;
 		}
-		Device device = cacheDevice.get(agentString);
+		Device device = getWithLock(cacheDevice, agentString, deviceLock);
 		if (device != null) {
 			return device;
 		}
 		device = super.parseDevice(agentString);
-		cacheDevice.put(agentString, device);
+		putWithLock(cacheDevice, agentString, device, deviceLock);
 		return device;
 	}
 
@@ -82,13 +87,33 @@ public class CachingParser extends Parser {
 		if (agentString == null) {
 			return null;
 		}
-		OS os = cacheOS.get(agentString);
+		OS os = getWithLock(cacheOS, agentString, osLock);
 		if (os != null) {
 			return os;
 		}
 		os = super.parseOS(agentString);
-		cacheOS.put(agentString, os);
+		putWithLock(cacheOS, agentString, os, osLock);
 		return os;
+	}
+
+	private <E> E getWithLock(Map<String, E> map, String key, ReentrantReadWriteLock lock) {
+		lock.readLock().lock();
+		E e;
+		try {
+			e = map.get(key);
+		} finally {
+			lock.readLock().unlock();
+		}
+		return e;
+	}
+
+	private <E> void putWithLock(Map<String, E> map, String key, E v, ReentrantReadWriteLock lock) {
+		lock.writeLock().lock();
+		try {
+			map.put(key, v);
+		} finally {
+			lock.writeLock().unlock();
+		}
 	}
 
 }
